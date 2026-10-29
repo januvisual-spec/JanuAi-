@@ -1,7 +1,12 @@
 package com.example.ui
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,7 +22,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Memory
@@ -49,7 +56,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.StatusTopBar
 import com.example.ui.screens.AssistantScreen
+import com.example.ui.screens.AutomationsScreen
 import com.example.ui.screens.ChatHistoryScreen
+import com.example.ui.screens.CodeStudioScreen
 import com.example.ui.screens.DeviceControlScreen
 import com.example.ui.screens.MemoryScreen
 import com.example.ui.screens.SettingsScreen
@@ -65,9 +74,11 @@ import com.example.ui.viewmodel.JanuViewModel
 
 enum class JanuScreen(val title: String, val icon: ImageVector, val testTag: String) {
     ASSISTANT("Assistant", Icons.Default.GraphicEq, "nav_assistant"),
-    CHAT("Chat Log", Icons.Default.Chat, "nav_chat"),
+    CODE("Code", Icons.Default.Code, "nav_code"),
+    AUTOMATIONS("Rules", Icons.Default.Bolt, "nav_automations"),
     DEVICE("Controls", Icons.Default.Devices, "nav_controls"),
     MEMORY("Memory", Icons.Default.Memory, "nav_memory"),
+    CHAT("Logs", Icons.Default.Chat, "nav_chat"),
     SETTINGS("Settings", Icons.Default.Settings, "nav_settings")
 }
 
@@ -81,6 +92,7 @@ fun JanuMainApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val chatMessages by viewModel.chatMessages.collectAsStateWithLifecycle()
     val memories by viewModel.memories.collectAsStateWithLifecycle()
+    val automationRules by viewModel.allRules.collectAsStateWithLifecycle()
 
     val isListening by viewModel.isListening.collectAsStateWithLifecycle()
     val isSpeaking by viewModel.isSpeaking.collectAsStateWithLifecycle()
@@ -109,6 +121,28 @@ fun JanuMainApp(
             viewModel.toggleListening()
         } else {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun exportMemoryVault() {
+        viewModel.exportMemorySnapshot { text ->
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("JANU AI Memory Vault", text))
+            Toast.makeText(context, "Memory Vault copied to clipboard!", Toast.LENGTH_SHORT).show()
+
+            // Also open Android Share Sheet for easy export
+            try {
+                val sendIntent = Intent().apply {
+                    action = Intent.ACTION_SEND
+                    putExtra(Intent.EXTRA_TEXT, text)
+                    type = "text/plain"
+                }
+                val shareIntent = Intent.createChooser(sendIntent, "Export JANU AI Memory Vault")
+                shareIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(shareIntent)
+            } catch (e: Exception) {
+                // Clipboard fallback succeeded
+            }
         }
     }
 
@@ -159,7 +193,7 @@ fun JanuMainApp(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             StatusTopBar(
-                isOnline = viewModel.deviceControl.isNetworkAvailable(),
+                isOnline = viewModel.androidControl.isNetworkAvailable(),
                 forceOffline = uiState.forceOfflineMode,
                 batteryLevel = uiState.batteryLevel,
                 isCharging = uiState.isCharging,
@@ -185,13 +219,14 @@ fun JanuMainApp(
                             Icon(
                                 imageVector = screen.icon,
                                 contentDescription = screen.title,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         },
                         label = {
                             Text(
                                 text = screen.title,
-                                fontSize = 10.sp,
+                                fontSize = 9.sp,
+                                maxLines = 1,
                                 color = if (isSelected) JanuNeonGreen else JanuTextSecondary
                             )
                         },
@@ -229,10 +264,18 @@ fun JanuMainApp(
                     onQuickCommand = { cmd -> viewModel.submitQuery(cmd) }
                 )
 
-                JanuScreen.CHAT -> ChatHistoryScreen(
-                    messages = chatMessages,
-                    onSpeakMessage = { text -> viewModel.speakText(text) },
-                    onClearChat = { viewModel.clearChatHistory() }
+                JanuScreen.CODE -> CodeStudioScreen(
+                    onSaveToBackups = { version, desc, file, data ->
+                        viewModel.saveProjectBackup(version, desc, file, data)
+                    }
+                )
+
+                JanuScreen.AUTOMATIONS -> AutomationsScreen(
+                    rules = automationRules,
+                    onToggleRule = { id, enabled -> viewModel.toggleAutomationRule(id, enabled) },
+                    onDeleteRule = { id -> viewModel.deleteAutomationRule(id) },
+                    onAddRule = { rule -> viewModel.addAutomationRule(rule) },
+                    onTestRule = { rule -> viewModel.testAutomationRule(rule) }
                 )
 
                 JanuScreen.DEVICE -> DeviceControlScreen(
@@ -255,7 +298,14 @@ fun JanuMainApp(
                     memories = memories,
                     onAddMemory = { k, v, c -> viewModel.addCustomMemory(k, v, c) },
                     onDeleteMemory = { id -> viewModel.deleteMemory(id) },
-                    onClearAllMemories = { viewModel.confirmPendingAction() }
+                    onClearAllMemories = { viewModel.confirmPendingAction() },
+                    onExportMemories = { exportMemoryVault() }
+                )
+
+                JanuScreen.CHAT -> ChatHistoryScreen(
+                    messages = chatMessages,
+                    onSpeakMessage = { text -> viewModel.speakText(text) },
+                    onClearChat = { viewModel.clearChatHistory() }
                 )
 
                 JanuScreen.SETTINGS -> SettingsScreen(

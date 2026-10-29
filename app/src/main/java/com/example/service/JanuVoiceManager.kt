@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 
-class JanuVoiceManager(
+open class JanuVoiceManager(
     private val context: Context,
     private val onCommandRecognized: (String) -> Unit
 ) : TextToSpeech.OnInitListener {

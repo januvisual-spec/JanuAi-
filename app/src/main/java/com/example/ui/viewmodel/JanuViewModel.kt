@@ -4,13 +4,19 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.JanuDatabase
+import com.example.data.model.AutomationRuleEntity
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.MemoryEntity
+import com.example.data.model.ProjectBackupEntity
 import com.example.data.repository.JanuRepository
 import com.example.service.AiResponse
-import com.example.service.DeviceControlManager
+import com.example.service.AndroidControlManager
+import com.example.service.AutomationManager
+import com.example.service.CodeGenerationManager
 import com.example.service.JanuAiEngine
 import com.example.service.JanuVoiceManager
+import com.example.service.ProjectBackupManager
+import com.example.service.ProjectMemoryManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -43,14 +49,32 @@ data class JanuUiState(
 class JanuViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = JanuDatabase.getDatabase(application, viewModelScope)
-    private val repository = JanuRepository(database.memoryDao(), database.chatDao())
-    val deviceControl = DeviceControlManager(application)
+    val repository = JanuRepository(
+        memoryDao = database.memoryDao(),
+        chatDao = database.chatDao(),
+        automationDao = database.automationDao(),
+        backupDao = database.backupDao()
+    )
+
+    val androidControl = AndroidControlManager(application)
+    // Alias for existing component compatibility
+    val deviceControl = androidControl
+
+    val automationManager = AutomationManager(repository, androidControl)
+    val codeGenManager = CodeGenerationManager()
+    val projectBackupManager = ProjectBackupManager(repository)
+    val projectMemoryManager = ProjectMemoryManager(repository)
 
     private val voiceManager = JanuVoiceManager(application) { recognizedText ->
         onVoiceInputReceived(recognizedText)
     }
 
-    private val aiEngine = JanuAiEngine(deviceControl, repository)
+    private val aiEngine = JanuAiEngine(
+        androidControl = androidControl,
+        repository = repository,
+        automationManager = automationManager,
+        codeGenManager = codeGenManager
+    )
 
     private val _uiState = MutableStateFlow(JanuUiState())
     val uiState: StateFlow<JanuUiState> = _uiState.asStateFlow()
@@ -59,6 +83,12 @@ class JanuViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val memories: StateFlow<List<MemoryEntity>> = repository.allMemories
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allRules: StateFlow<List<AutomationRuleEntity>> = repository.allRules
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allBackups: StateFlow<List<ProjectBackupEntity>> = repository.allBackups
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val isListening: StateFlow<Boolean> = voiceManager.isListening
@@ -73,51 +103,51 @@ class JanuViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun observeDeviceStates() {
         viewModelScope.launch {
-            deviceControl.isFlashlightOn.collect { on ->
+            androidControl.isFlashlightOn.collect { on ->
                 _uiState.update { it.copy(isFlashlightOn = on) }
             }
         }
         viewModelScope.launch {
-            deviceControl.batteryLevel.collect { level ->
+            androidControl.batteryLevel.collect { level ->
                 _uiState.update { it.copy(batteryLevel = level) }
             }
         }
         viewModelScope.launch {
-            deviceControl.isCharging.collect { charging ->
+            androidControl.isCharging.collect { charging ->
                 _uiState.update { it.copy(isCharging = charging) }
             }
         }
         viewModelScope.launch {
-            deviceControl.actionsManager.brightnessPercent.collect { br ->
+            androidControl.actionsManager.brightnessPercent.collect { br ->
                 _uiState.update { it.copy(brightnessPercent = br) }
             }
         }
         viewModelScope.launch {
-            deviceControl.actionsManager.isWifiEnabled.collect { wifi ->
+            androidControl.actionsManager.isWifiEnabled.collect { wifi ->
                 _uiState.update { it.copy(isWifiEnabled = wifi) }
             }
         }
         viewModelScope.launch {
-            deviceControl.actionsManager.isBluetoothEnabled.collect { bt ->
+            androidControl.actionsManager.isBluetoothEnabled.collect { bt ->
                 _uiState.update { it.copy(isBluetoothEnabled = bt) }
             }
         }
         viewModelScope.launch {
-            deviceControl.actionsManager.canWriteSystemSettings.collect { canWrite ->
+            androidControl.actionsManager.canWriteSystemSettings.collect { canWrite ->
                 _uiState.update { it.copy(canWriteSystemSettings = canWrite) }
             }
         }
     }
 
     fun attachActivity(activity: android.app.Activity) {
-        deviceControl.actionsManager.currentActivity = activity
+        androidControl.actionsManager.currentActivity = activity
     }
 
     fun refreshDeviceTelemetry() {
-        val (level, charging) = deviceControl.refreshBatteryInfo()
-        val networkText = deviceControl.getNetworkStatusText()
-        val volume = deviceControl.getCurrentVolumePercent()
-        deviceControl.actionsManager.refreshStates()
+        val (level, charging) = androidControl.refreshBatteryInfo()
+        val networkText = androidControl.getNetworkStatusText()
+        val volume = androidControl.getCurrentVolumePercent()
+        androidControl.actionsManager.refreshStates()
 
         _uiState.update {
             it.copy(
@@ -125,11 +155,20 @@ class JanuViewModel(application: Application) : AndroidViewModel(application) {
                 isCharging = charging,
                 networkStatus = networkText,
                 volumePercent = volume,
-                brightnessPercent = deviceControl.actionsManager.brightnessPercent.value,
-                isWifiEnabled = deviceControl.actionsManager.isWifiEnabled.value,
-                isBluetoothEnabled = deviceControl.actionsManager.isBluetoothEnabled.value,
-                canWriteSystemSettings = deviceControl.actionsManager.canWriteSystemSettings.value
+                brightnessPercent = androidControl.actionsManager.brightnessPercent.value,
+                isWifiEnabled = androidControl.actionsManager.isWifiEnabled.value,
+                isBluetoothEnabled = androidControl.actionsManager.isBluetoothEnabled.value,
+                canWriteSystemSettings = androidControl.actionsManager.canWriteSystemSettings.value
             )
+        }
+
+        // Evaluate automated battery triggers
+        viewModelScope.launch {
+            val batMatch = automationManager.checkBatteryTrigger(level, charging)
+            if (batMatch.isMatched && batMatch.responseText != null) {
+                _uiState.update { it.copy(lastResponse = batMatch.responseText) }
+                voiceManager.speak(batMatch.responseText, _uiState.value.selectedLanguage)
+            }
         }
     }
 
@@ -250,59 +289,59 @@ class JanuViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleFlashlight() {
-        deviceControl.toggleFlashlight()
+        androidControl.toggleFlashlight()
     }
 
     fun setVolume(percent: Int) {
-        deviceControl.setVolumePercent(percent)
+        androidControl.setVolumePercent(percent)
         _uiState.update { it.copy(volumePercent = percent) }
     }
 
     fun increaseVolume() {
-        val newVol = deviceControl.increaseVolume()
+        val newVol = androidControl.increaseVolume()
         _uiState.update { it.copy(volumePercent = newVol) }
     }
 
     fun decreaseVolume() {
-        val newVol = deviceControl.decreaseVolume()
+        val newVol = androidControl.decreaseVolume()
         _uiState.update { it.copy(volumePercent = newVol) }
     }
 
     fun openWifiPanel() {
-        deviceControl.actionsManager.openWifiPanel()
+        androidControl.actionsManager.openWifiPanel()
     }
 
     fun openBluetoothSettings() {
-        deviceControl.actionsManager.openBluetoothSettings()
+        androidControl.actionsManager.openBluetoothSettings()
     }
 
     fun setBrightness(percent: Int) {
-        deviceControl.actionsManager.setBrightnessPercent(percent)
+        androidControl.actionsManager.setBrightnessPercent(percent)
         _uiState.update { it.copy(brightnessPercent = percent) }
     }
 
     fun increaseBrightness() {
-        val newBr = deviceControl.actionsManager.increaseBrightness(15)
+        val newBr = androidControl.actionsManager.increaseBrightness(15)
         _uiState.update { it.copy(brightnessPercent = newBr) }
     }
 
     fun decreaseBrightness() {
-        val newBr = deviceControl.actionsManager.decreaseBrightness(15)
+        val newBr = androidControl.actionsManager.decreaseBrightness(15)
         _uiState.update { it.copy(brightnessPercent = newBr) }
     }
 
     fun requestWriteSettingsPermission() {
-        deviceControl.actionsManager.openWriteSettingsPermissionScreen()
+        androidControl.actionsManager.openWriteSettingsPermissionScreen()
     }
 
     fun launchAppByName(name: String) {
         when (name.lowercase()) {
-            "youtube" -> deviceControl.launchYouTube()
-            "whatsapp" -> deviceControl.launchWhatsApp()
-            "camera" -> deviceControl.launchCamera()
-            "settings" -> deviceControl.launchSettings()
-            "music" -> deviceControl.launchMusic()
-            "alarm" -> deviceControl.setAlarm(7, 0, "JANU Alarm")
+            "youtube" -> androidControl.launchYouTube()
+            "whatsapp" -> androidControl.launchWhatsApp()
+            "camera" -> androidControl.launchCamera()
+            "settings" -> androidControl.launchSettings()
+            "music" -> androidControl.launchMusicPlayer()
+            "alarm" -> androidControl.setAlarm(7, 0, "JANU Alarm")
         }
     }
 
@@ -321,6 +360,52 @@ class JanuViewModel(application: Application) : AndroidViewModel(application) {
     fun clearChatHistory() {
         viewModelScope.launch {
             repository.clearChatMessages()
+        }
+    }
+
+    // Automations
+    fun addAutomationRule(rule: AutomationRuleEntity) {
+        viewModelScope.launch {
+            repository.saveAutomationRule(rule)
+        }
+    }
+
+    fun toggleAutomationRule(id: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.toggleAutomationRule(id, enabled)
+        }
+    }
+
+    fun deleteAutomationRule(id: Long) {
+        viewModelScope.launch {
+            repository.deleteAutomationRule(id)
+        }
+    }
+
+    fun testAutomationRule(rule: AutomationRuleEntity) {
+        val testFeedback = "Simulating trigger '${rule.triggerValue}' for rule '${rule.title}'."
+        _uiState.update { it.copy(lastResponse = testFeedback) }
+        voiceManager.speak(testFeedback, _uiState.value.selectedLanguage)
+    }
+
+    // Project Backups
+    fun saveProjectBackup(versionName: String, description: String, fileList: String, data: String) {
+        viewModelScope.launch {
+            repository.createBackup(versionName, description, fileList, data)
+        }
+    }
+
+    fun deleteProjectBackup(id: Long) {
+        viewModelScope.launch {
+            repository.deleteBackup(id)
+        }
+    }
+
+    // Memory Export
+    fun exportMemorySnapshot(onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            val text = repository.exportMemoryText()
+            onReady(text)
         }
     }
 

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -69,6 +70,7 @@ fun MemoryScreen(
     onAddMemory: (String, String, String) -> Unit,
     onDeleteMemory: (Long) -> Unit,
     onClearAllMemories: () -> Unit,
+    onExportMemories: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -209,38 +211,61 @@ fun MemoryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(JanuDarkGreen)
-                        .border(1.dp, JanuNeonGreen, CircleShape),
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Memory,
-                        contentDescription = "Memory Vault",
-                        tint = JanuNeonGreen,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(JanuDarkGreen)
+                            .border(1.dp, JanuNeonGreen, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Memory,
+                            contentDescription = "Memory Vault",
+                            tint = JanuNeonGreen,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column {
+                        Text(
+                            text = "PERSONAL MEMORY VAULT",
+                            color = JanuNeonGreen,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            text = "Encrypted local SQLite storage via Room",
+                            color = JanuTextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column {
-                    Text(
-                        text = "PERSONAL MEMORY VAULT",
-                        color = JanuNeonGreen,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp
-                    )
-                    Text(
-                        text = "Encrypted local SQLite storage via Room",
-                        color = JanuTextSecondary,
-                        fontSize = 11.sp
+                IconButton(
+                    onClick = { onExportMemories() },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(JanuDarkGreen)
+                        .border(1.dp, JanuNeonGreen, CircleShape)
+                        .testTag("export_memory_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FileDownload,
+                        contentDescription = "Export Memories",
+                        tint = JanuNeonGreen,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
