@@ -1,0 +1,6 @@
+{
+  "name": "JANU AI Voice Assistant",
+  "description": "Jarvis-style personal AI voice assistant with online and offline capabilities, device control, and personal memory.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

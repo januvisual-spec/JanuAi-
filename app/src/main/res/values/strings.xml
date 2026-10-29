@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">JANU AI</string>
+    <string name="tagline">Your Personal Intelligent Assistant</string>
+    <string name="mic_listening">Listening to you…</string>
+    <string name="mic_tap_to_speak">Tap to speak with JANU</string>
+    <string name="status_online">ONLINE AI (Gemini 3.8)</string>
+    <string name="status_offline">OFFLINE AI (Local Core)</string>
+    <string name="permission_mic_needed">Audio recording permission is required for voice conversation.</string>
+</resources>
